@@ -1,4 +1,3 @@
-"""Сообщества графа и их сводки. Требование FR-3."""
 
 from collections import Counter, defaultdict
 
@@ -23,26 +22,17 @@ SYSTEM_PROMPT = (
 
 
 def detect_communities(graph: nx.DiGraph) -> list[Community]:
-    """Разбивает узлы на сообщества алгоритмом Лувена с фиксированным `seed`.
-
-    Каждый узел входит ровно в одно сообщество. Поле `summary` здесь остаётся пустым.
-    """
     if graph.number_of_nodes() == 0:
         return []
 
     undirected = _undirected(graph)
     groups = nx.community.louvain_communities(undirected, weight="weight", resolution=1.0, seed=SEED)
 
-    # Порядок сообществ фиксируем сами: сначала крупные, при равенстве — по имени первого узла.
     ordered = sorted((sorted(group) for group in groups), key=lambda nodes: (-len(nodes), nodes[0]))
     return [Community(community_id=number, nodes=nodes) for number, nodes in enumerate(ordered)]
 
 
 def summarize_community(community: Community, graph: nx.DiGraph, llm: LLMClient) -> str:
-    """Сводка сообщества не длиннее 150 слов: какие сущности входят, как связаны, что встречается чаще.
-
-    Все числа считает код по весам рёбер и передаёт модели готовыми. Модель их только формулирует.
-    """
     nodes = sorted({node for node in community.nodes if node in graph})
     if not nodes:
         return ""
@@ -57,18 +47,17 @@ def summarize_community(community: Community, graph: nx.DiGraph, llm: LLMClient)
     )
 
     summary = " ".join(response.content.split())
-    if not summary:  # модель промолчала — сводку собираем из тех же фактов, без второго вызова
+    if not summary:
         summary = _fallback_summary(nodes, graph)
     return " ".join(summary.split()[:MAX_SUMMARY_WORDS])
 
 
 def _undirected(graph: nx.DiGraph) -> nx.Graph:
-    """Граф без направления: веса встречных рёбер складываются, порядок узлов фиксирован."""
     undirected = nx.Graph()
     undirected.add_nodes_from(sorted(graph.nodes))
     edges = sorted(graph.edges(data=True), key=lambda item: (item[0], item[1]))
     for source, target, data in edges:
-        if source == target:  # петли на разбиение не влияют
+        if source == target:
             continue
         weight = _weight(data)
         if undirected.has_edge(source, target):
@@ -98,7 +87,6 @@ def _kind(graph: nx.DiGraph, node: str) -> str:
 
 
 def _community_facts(community_id: int, nodes: list[str], graph: nx.DiGraph) -> str:
-    """Текст для модели: состав сообщества, связи и все подсчёты по весам рёбер."""
     members = set(nodes)
 
     by_type: dict[str, list[str]] = defaultdict(list)
@@ -181,7 +169,6 @@ def _community_facts(community_id: int, nodes: list[str], graph: nx.DiGraph) -> 
 
 
 def _sources(graph: nx.DiGraph, nodes: list[str], internal: list[tuple[str, str, dict]]) -> list[str]:
-    """Идентификаторы документов без номеров чанков."""
     chunks: set[str] = set()
     for node in nodes:
         chunks.update(graph.nodes[node].get("sources") or [])
@@ -191,7 +178,6 @@ def _sources(graph: nx.DiGraph, nodes: list[str], internal: list[tuple[str, str,
 
 
 def _fallback_summary(nodes: list[str], graph: nx.DiGraph) -> str:
-    """Короткая сводка без модели: нужна, только если модель вернула пустой ответ."""
     counts = Counter(_kind(graph, node) for node in nodes)
     composition = ", ".join(f"{kind}: {count}" for kind, count in sorted(counts.items()))
     heaviest = max(graph.edges(nodes, data=True), key=lambda item: _weight(item[2]), default=None)
